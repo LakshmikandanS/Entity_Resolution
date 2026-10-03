@@ -74,6 +74,7 @@ def main():
     sc = cfg["similarity"]
     split = args.split
     api = baseline_api.load(cfg)
+    api.require(*[f"{s}-{split}" for s in ("01", "03", "04", "05")])
     mon = Monitor(cfg, f"n04_pair_similarity_{split}")
     device = pick_device()
     limit_vram(cfg["train"]["vram_fraction"])

@@ -141,6 +141,8 @@ def evaluate(model, tok, D, val_idx, cfg, device, max_batches):
 
 def main():
     ap = add_config_arg(argparse.ArgumentParser(description=__doc__.split("\n")[0]))
+    ap.add_argument("--max-steps", type=int, default=0,
+                    help="stop after this many optimiser steps with a checkpoint (testing / time-boxed runs)")
     args = ap.parse_args()
     cfg = load_config(args.config)
     tc, mc = cfg["train"], cfg["model"]
@@ -172,17 +174,24 @@ def main():
         print(f"groups train {len(train_idx):,} val {len(val_idx):,}; trainable params {n_trainable:,}")
 
     ckpt = out_dir / "ckpt_last.pt"
+    # frozen weights (the 96M-parameter word-embedding table) never change: keep them out of checkpoints,
+    # which saves ~0.4 GB of disk and of host RAM while saving
+    frozen = {n for n, p in model.named_parameters() if not p.requires_grad}
     st = {"epoch": 0, "consumed": 0, "step": 0, "B": tc["groups_per_batch"], "best": -1.0, "history": []}
     if ckpt.exists():
         blob = torch.load(ckpt, map_location="cpu", weights_only=False)
-        model.load_state_dict(blob["model"])
+        missing, unexpected = model.load_state_dict(blob["model"], strict=False)
+        if unexpected or set(missing) - frozen:
+            raise SystemExit(f"{ckpt} does not match the model (missing {missing}, unexpected {unexpected})")
         opt.load_state_dict(blob["opt"])
         st = blob["state"]
+        del blob
         print(f"resumed at epoch {st['epoch']} group {st['consumed']:,} step {st['step']}")
 
     def save_ckpt():
         tmp = ckpt.with_suffix(".tmp")
-        torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "state": st}, tmp)
+        state = {k: v for k, v in model.state_dict().items() if k not in frozen}
+        torch.save({"model": state, "opt": opt.state_dict(), "state": st}, tmp)
         os.replace(tmp, ckpt)
 
     total = tc["epochs"] * len(train_idx)
@@ -244,6 +253,11 @@ def main():
                         model.save(out_dir / "best", tok, {**mc, "step": st["step"], **ev})
                 if st["step"] % tc["ckpt_every"] == 0:
                     save_ckpt()
+                if args.max_steps and st["step"] >= args.max_steps:
+                    save_ckpt()
+                    print(f"stopped at step {st['step']} (--max-steps); rerun to resume", flush=True)
+                    mon.close()
+                    return
             st["epoch"] += 1
             st["consumed"] = 0
             save_ckpt()

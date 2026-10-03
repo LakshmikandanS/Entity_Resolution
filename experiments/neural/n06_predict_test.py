@@ -35,6 +35,7 @@ def main():
     cfg = load_config(args.config)
     cc = cfg["compare"]
     api = baseline_api.load(cfg)
+    api.require("01-test", "03-test", "04-test", "05-test")
     cmp_dir = cfg.work / "compare"
     results = read_json(cmp_dir / "arm_results.json", {})
     if args.arm not in results:

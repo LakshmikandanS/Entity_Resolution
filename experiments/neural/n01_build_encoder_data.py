@@ -56,6 +56,7 @@ def main():
         print(f"{out_dir} already built; use --force to rebuild")
         return
     api = baseline_api.load(cfg)
+    api.require("01-train", "02", "03-train", "04-train", "05-train")
     ec = cfg["encoder_data"]
     block = cfg["embed"]["csv_block_bytes"]
     mon = Monitor(cfg, "n01_build_encoder_data")

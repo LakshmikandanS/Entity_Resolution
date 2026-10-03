@@ -96,6 +96,7 @@ def main():
     cc = cfg["compare"]
     arms = (args.arms or ",".join(cc["arms"])).split(",")
     api = baseline_api.load(cfg)
+    api.require("01-train", "02", "03-train", "04-train", "05-train", "06")
     mon = Monitor(cfg, "n05_train_compare")
     out = cfg.wpath("compare", "x").parent
     pdir = cfg.work / "pairs"
@@ -226,7 +227,8 @@ def main():
     with mon.stage("segments"):
         tflags = np.concatenate([np.load(cfg.work / "emb" / "train" / f"s{s}_flags.npy") for s in (2, 3)])
         indic_s1, empty_s1 = np.zeros(n1, bool), np.zeros(n1, bool)
-        owned_by_enc = np.zeros(n_t, bool)
+        owned_by_enc = np.zeros(n_t, bool)    # target is a true link of an encoder-split S1
+        owned_by_eval = np.zeros(n_t, bool)   # target is a true link of an evaluation-split S1
         for s in range(0, P, 10_000_000):
             lab = np.asarray(labels[s:s + 10_000_000]) == 1
             r = np.asarray(s1_row[s:s + 10_000_000])[lab]
@@ -234,6 +236,7 @@ def main():
             indic_s1[r[(tflags[g] & 2) > 0]] = True
             empty_s1[r[(tflags[g] & 1) > 0]] = True
             owned_by_enc[g[enc[r]]] = True
+            owned_by_eval[g[eval_mask[r]]] = True
         country = np.asarray(ids.column("country").to_pylist(), dtype=object)[eval_mask]
         nt = n_true_eval
         segs = {"all": np.ones(nt.size, bool), "singleton": nt == 0, "1_link": nt == 1,
@@ -259,24 +262,27 @@ def main():
         rng_of = {"nn_s1_rank": (1, 33), "nn_t_rank": (1, 33), "nn_s1_margin": (0, 2), "nn_t_margin": (0, 2)}
         bins = cc["hist_bins"]
         edges = {f: np.linspace(*rng_of.get(f, (-1, 1)), bins + 1) for f in NN}
-        H = {(f, k): np.zeros(bins, np.int64) for f in NN for k in ("pos", "neg", "neg_enc_target")}
+        groups = ("pos", "neg", "neg_owned_eval", "neg_enc_target")
+        H = {(f, k): np.zeros(bins, np.int64) for f in NN for k in groups}
         nan_ct = dict.fromkeys(NN, 0)
         for s in range(0, P, 5_000_000):
             ev = pair_eval[s:s + 5_000_000]
             X = np.asarray(neural[s:s + 5_000_000], dtype=np.float32)[ev]
             lab = np.asarray(labels[s:s + 5_000_000])[ev] == 1
-            encn = owned_by_enc[np.asarray(t_gid[s:s + 5_000_000])[ev]] & ~lab
+            tg = np.asarray(t_gid[s:s + 5_000_000])[ev]
+            encn = owned_by_enc[tg] & ~lab
+            evn = owned_by_eval[tg] & ~lab
             for j, f in enumerate(NN):
                 v = X[:, j]
                 ok = ~np.isnan(v)
                 nan_ct[f] += int((~ok).sum())
                 vc = np.clip(v, edges[f][0], edges[f][-1])
-                for k, m in (("pos", lab & ok), ("neg", ~lab & ok & ~encn), ("neg_enc_target", encn & ok)):
+                for k, m in (("pos", lab & ok), ("neg", ~lab & ok & ~encn), ("neg_owned_eval", evn & ok),
+                             ("neg_enc_target", encn & ok)):
                     H[(f, k)] += np.histogram(vc[m], bins=edges[f])[0]
         dist = {}
         for f in NN:
-            dist[f] = {k: {"n": int(H[(f, k)].sum()), **hist_quantiles(H[(f, k)], edges[f])}
-                       for k in ("pos", "neg", "neg_enc_target")}
+            dist[f] = {k: {"n": int(H[(f, k)].sum()), **hist_quantiles(H[(f, k)], edges[f])} for k in groups}
             dist[f]["auc_pos_vs_neg"] = hist_auc(H[(f, "pos")], H[(f, "neg")])
             dist[f]["nan_rate"] = nan_ct[f] / max(setup["P_eval"], 1)
 
@@ -328,14 +334,16 @@ def render_md(r) -> str:
                  f"{'' if d is None else format(d, '+.4f')} | {fmt(row.get('precision_A'))} | "
                  f"{fmt(row.get('precision_B'))} | {fmt(row.get('recall_A'))} | {fmt(row.get('recall_B'))} |")
     L += ["", "## Neural feature distributions (eval pairs)", "",
-          "`neg_enc_target` = negatives whose target is a true link of an encoder-split S1 (leakage check: should "
-          "look like `neg`). AUC < 0.5 means lower values indicate a match (ranks, margins).", "",
-          "| Feature | AUC | NaN rate | pos p25/p50/p75 | neg p25/p50/p75 | neg_enc_target p50 |",
-          "|---|---:|---:|---|---|---:|"]
+          "Leakage check: `enc-owned` = negatives whose target is a true link of an encoder-split S1, `eval-owned` = "
+          "negatives whose target is a true link of another evaluation-split S1. If the encoder leaked, enc-owned "
+          "negatives would look easier (lower cosine, larger margin) than eval-owned ones. AUC is pos vs "
+          "negatives excluding enc-owned; AUC < 0.5 means lower values indicate a match (ranks, margins).", "",
+          "| Feature | AUC | NaN rate | pos p25/p50/p75 | neg p25/p50/p75 | eval-owned p50 | enc-owned p50 |",
+          "|---|---:|---:|---|---|---:|---:|"]
     q = lambda d: f"{fmt(d['p25'], 3)} / {fmt(d['p50'], 3)} / {fmt(d['p75'], 3)}"
     for f, d in r["neural_feature_distributions"].items():
         L.append(f"| {f} | {fmt(d['auc_pos_vs_neg'])} | {d['nan_rate']:.4f} | {q(d['pos'])} | {q(d['neg'])} | "
-                 f"{fmt(d['neg_enc_target']['p50'], 3)} |")
+                 f"{fmt(d['neg_owned_eval']['p50'], 3)} | {fmt(d['neg_enc_target']['p50'], 3)} |")
     L += ["", "## Runtime and peaks", "", "| Script | Stage | s | peak RSS GB | peak VRAM GB |", "|---|---|---:|---:|---:|"]
     for k, v in r["runtime_and_peaks"].items():
         for st, x in (v.get("stages") or {}).items():

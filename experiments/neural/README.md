@@ -12,20 +12,21 @@ Design and sizing rationale: [`PLAN.md`](PLAN.md). Differences from the plan are
 
 ## Status
 
-| Stage | Implemented | Sanity-tested (synthetic, 600 S1) | Run on real data |
-|---|---|---|---|
-| `baseline_api.py` adapter (wired to `code/business_entity_resolution/src`) | yes | yes, against the real baseline stages | no |
-| `n01_build_encoder_data.py` | yes | yes | **no** |
-| `n02_train_encoder.py` (multilingual-e5-small) | yes | yes, with a random 2-layer BERT | **no** |
-| `n03_embed.py` | yes | yes (incl. resume) | **no** |
-| `n04_pair_similarity.py` | yes | yes (incl. rerun skip) | **no** |
-| `n05_train_compare.py` (A/B) | yes | yes (HGB backend) | **no** |
-| `n06_predict_test.py` | yes | yes | **no** |
+| Stage | Implemented | Synthetic smoke test (600 S1) | Real-data sample (20k train S1, real e5) | Full real data |
+|---|---|---|---|---|
+| `baseline_api.py` adapter | yes | yes | yes | no |
+| `n01_build_encoder_data.py` | yes | yes | yes | **no** |
+| `n02_train_encoder.py` (multilingual-e5-small) | yes | yes, incl. interrupt + resume | yes | **no** |
+| `n03_embed.py` | yes | yes, incl. resume | yes | **no** |
+| `n04_pair_similarity.py` | yes | yes, incl. rerun skip | yes | **no** |
+| `n05_train_compare.py` (A/B) | yes | yes (HGB backend) | yes (HGB backend) | **no** |
+| `n06_predict_test.py` | yes | yes | yes (on a held-out slice of train, not test) | **no** |
 
 `tests/smoke_test.py` runs the unmodified baseline stages (train 01-06, test 01/03/04/05) on a tiny
-synthetic dataset, then n01-n06 against them, and checks shapes, unit norms, no NaN, rank/margin
-correctness, that both arms use identical training rows, that no encoder-split S1 enters the A/B, and one
-output row per test S1. Its numbers mean nothing. No real data, no model download, ~2 min:
+synthetic dataset, then n01-n06 against them (n02 is interrupted and resumed), and checks shapes, unit
+norms, no NaN, rank/margin correctness, that both arms use identical training rows, that no encoder-split S1
+enters the A/B, and one output row per test S1. Its numbers mean nothing. No real data, no model download,
+~2 min:
 
 ```bash
 python experiments/neural/tests/smoke_test.py --out <scratch dir>
@@ -33,22 +34,25 @@ python experiments/neural/tests/smoke_test.py --out <scratch dir>
 
 ## Prerequisites
 
-1. Baseline **train** stages 01-06 finished (`code/business_entity_resolution/README.md`), with the default
-   `--work-dir work` and `--artifacts-dir artifacts` at the repo root (or edit `baseline:` in `config.yaml`).
-   For step 6 also baseline **test** stages 01, 03, 04, 05.
+1. Baseline **train** stages 01-06 finished, with the default `--work-dir work` and `--artifacts-dir artifacts`
+   at the repo root (or edit `baseline:` in `config.yaml`). From the repo root:
+   `python code/business_entity_resolution/run_pipeline.py --to 06`. For step 6 also the baseline **test**
+   stages: `python code/business_entity_resolution/run_pipeline.py --only 01-test 03-test 04-test 05-test`.
+   Every neural script checks this first and prints the command to run if a stage is missing.
 2. Python packages already present on this machine: torch 2.11+cu128, transformers 5.5, pyarrow, polars,
    psutil, pyyaml, scikit-learn. `xgboost` is optional exactly as in the baseline: if it is missing, both arms
    use the baseline's HistGradientBoosting fallback (CPU, 3M-row entity subsample).
-3. First run of n02 downloads `intfloat/multilingual-e5-small` (MIT licence, 118M parameters, ~470 MB) from
-   Hugging Face. That is a model download, not an entity lookup; no data leaves the machine.
+3. `intfloat/multilingual-e5-small` (MIT licence, 118M parameters, ~470 MB) comes from Hugging Face. It is
+   already in this machine's Hugging Face cache (downloaded while testing). That is a model download, not an
+   entity lookup; no data leaves the machine.
 
-## Commands (from the repository root; none of these have been run on real data)
+## Commands (from the repository root; not yet run on the full real data)
 
 ```bash
 # 1. encoder fine-tuning data from the deterministic 10% encoder split of TRAIN S1
 python experiments/neural/n01_build_encoder_data.py
 
-# 2. fine-tune the bi-encoder (GPU)
+# 2. fine-tune the bi-encoder (GPU); --max-steps N stops early with a checkpoint, rerun to resume
 python experiments/neural/n02_train_encoder.py
 
 # 3. embeddings for every train record (GPU)
@@ -72,7 +76,13 @@ Every step is resumable: rerun the same command after an interruption. Progress 
 outputs under `experiments/neural/work/` (gitignored). Per-stage wall time, peak RSS and peak VRAM are
 logged to `work/runlog/*.json` and summarised in the A/B report.
 
-## Resource budget per step (estimates, not measurements)
+## Resource budget per step
+
+Measured on the 20k-S1 real-data sample with the real e5-small (RTX 5060 Laptop, 2026-10-04):
+fine-tuning ~180 groups/s at batch 64 groups with peak VRAM 1.8 GB; embedding ~4,750 records/s
+(2 sequences each) with peak VRAM 1.0 GB; peak working set 2.2-3.0 GB per process, a large share of which is
+the CUDA/torch DLLs Windows counts in the working set. The full-data times below are extrapolated from those
+rates; the rest are estimates.
 
 Scale used: train S1 2,206,821, S2+S3 10,320,219; test S1 1,732,544, S2+S3 9,969,589 (streamed line counts).
 Baseline `MAX_CANDIDATES_PER_S1 = 32`, so train pairs P <= 70.6M (eval split ~63.6M), test P <= 55.4M.
@@ -80,11 +90,11 @@ Baseline `MAX_CANDIDATES_PER_S1 = 32`, so train pairs P <= 70.6M (eval split ~63
 | Step | Pairs / records | Peak RAM | Peak VRAM | Disk written | Time (RTX 5060 Laptop) |
 |---|---|---:|---:|---:|---:|
 | 1 n01 | 221k S1, ~763k links, <= 2.2M hard-neg slots, <= 3M target texts | ~1.5 GB | 0 | ~0.5 GB | 10-20 min |
-| 2 n02 | ~763k groups x 5 records x 2 fields, batch 64 groups | ~1.5 GB | 2.2-2.8 GB | 1.4 GB checkpoint, 0.47 GB model | 35-70 min |
-| 3 n03 train | 12.53M records x 2 sequences | < 1 GB | ~1.2 GB | 6.4 GB | 40-70 min |
+| 2 n02 | ~763k groups x 5 records x 2 fields, batch 64 groups | ~2.5-3.5 GB (measured 3.0 GB on the sample) | 1.8 GB measured | ~1 GB checkpoint, 0.47 GB model | ~70 min (763k / 180 groups/s) |
+| 3 n03 train | 12.53M records x 2 sequences | ~2.2 GB measured | 1.0 GB measured | 6.4 GB | ~45 min (at 4,750 records/s) |
 | 4 n04 train | P <= 70.6M pairs | < 1.5 GB | ~3 GB | 1.1 GB features + 0.6 GB pair metadata (+1.1 GB temp) | 5-15 min |
 | 5 n05 | training rows = baseline trainset on eval S1; 2 arms x 2 folds; 2 OOF passes over P | ~1-2 GB (XGBoost) / up to ~2.6 GB (HGB) | baseline model only (XGBoost <= 0.8 x 6 GB cap) | trainset copy (same order as baseline's) + 0.56 GB OOF | dominated by 4 model fits |
-| 6 n03+n04+n06 test | 11.7M records; P <= 55.4M | < 1.5 GB | ~3 GB / model only | 6.0 + 1.3 GB + TSVs | ~1-1.5 h |
+| 6 n03+n04+n06 test | 11.7M records; P <= 55.4M | ~2.2 GB | ~3 GB / model only | 6.0 + 1.3 GB + TSVs | ~1 h (embedding ~41 min) |
 
 Memory techniques: chunked Arrow reads (never pandas), length-sorted fp16 inference with per-chunk string
 dedup, fp16 memmaps for embeddings and features, S1 embeddings resident on GPU with targets streamed in

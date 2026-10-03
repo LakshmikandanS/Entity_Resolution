@@ -59,6 +59,29 @@ class ClassicalBaseline:
     def paths(self, split):
         return self.io.Paths(*self._dirs, split=split)
 
+    _STAGE_DIRS = {"01": "normalized", "02": "labels", "03": "index", "04": "candidates", "05": "features",
+                   "06": "trainset"}
+
+    def require(self, *stages):
+        """Exit with a readable message (no traceback) unless every named baseline stage has finished.
+        Stage names follow run_pipeline.py: '01-train', '02', '05-test', '06', ..."""
+        missing = []
+        for st in stages:
+            num, _, split = st.partition("-")
+            d = os.path.join(self._dirs[1], split or "train", self._STAGE_DIRS[num])
+            if not os.path.exists(os.path.join(d, self.io.MANIFEST)):
+                missing.append(st)
+            elif num == "02" and not os.path.exists(os.path.join(self._dirs[2], "rewrite_map.json")):
+                missing.append(st)
+        if missing:
+            test = any(s.endswith("-test") for s in missing)
+            cmd = ("python code/business_entity_resolution/run_pipeline.py --only " + " ".join(missing)) if test \
+                else "python code/business_entity_resolution/run_pipeline.py --to 06"
+            raise SystemExit(
+                f"\nBaseline stages not finished yet: {', '.join(missing)}\n"
+                f"(looked in {self._dirs[1]}). The neural scripts read their outputs, so run them first, from the "
+                f"repository root:\n    {cmd}\nFinished stages are skipped, so rerunning is safe.\n")
+
     def _manifest(self, directory, what):
         if not self.io.stage_done(directory):
             raise BaselineNotReady(f"baseline {what} is not finished ({directory} has no _MANIFEST.json)")

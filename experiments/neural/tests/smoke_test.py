@@ -114,7 +114,8 @@ def main():
     cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
     run("n01_build_encoder_data.py", cfg_path)
-    run("n02_train_encoder.py", cfg_path)
+    run("n02_train_encoder.py", cfg_path, "--max-steps", "15")   # interrupted run with a checkpoint ...
+    run("n02_train_encoder.py", cfg_path)                         # ... resumed to the end
     run("n03_embed.py", cfg_path, "--split", "train", "--sources", "1")   # partial, then resume the rest
     run("n03_embed.py", cfg_path, "--split", "train")
     run("n04_pair_similarity.py", cfg_path, "--split", "train")
