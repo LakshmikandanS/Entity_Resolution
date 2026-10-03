@@ -9,6 +9,7 @@ Key document frequencies of the test index are computed on the test targets them
 unsupervised candidate generation (no labels, no tuning), the same procedure run on new data.
 """
 import argparse
+import gc
 import glob
 import os
 import sys
@@ -128,7 +129,10 @@ def build_records_and_keys(paths, man, canon, chunk_rows, n_partitions):
             stats[src] = st
     writer.close()
     rec_s1.flush(); rec_t.flush()
-    del rec_s1, rec_t
+    # Drop every reference to the memmaps (the loop variable `rec` still holds rec_t) so Windows
+    # releases the file handles before the rename.
+    del rec_s1, rec_t, rec
+    gc.collect()
     os.replace(os.path.join(paths.records, "s1.npy.tmp"), os.path.join(paths.records, "s1.npy"))
     os.replace(os.path.join(paths.records, "tgt.npy.tmp"), os.path.join(paths.records, "tgt.npy"))
     os.replace(os.path.join(idx_dir, "s1_keys.u64.tmp"), os.path.join(idx_dir, "s1_keys.u64"))
