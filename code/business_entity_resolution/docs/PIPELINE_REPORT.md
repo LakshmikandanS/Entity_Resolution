@@ -208,5 +208,6 @@ The test score is the mean of the two fold models.
 8. I looked at the first 5 lines of each test file only to confirm the schema. No design decision uses them.
 
 ## 15. Commands
-See README.md. Run order: 00, then on train 01, 02, 03, 04, 05, 06, 07, 08, 09, 10, then on test
+One command: `python run_pipeline.py` (each stage in its own process, logged, stops on the first
+failure, resumable; `--dry-run` lists the commands). Per-stage commands are in README.md. Run order: 00, then on train 01, 02, 03, 04, 05, 06, 07, 08, 09, 10, then on test
 01, 03, 04, 05 with `--split test`, then 11, then the official validator.

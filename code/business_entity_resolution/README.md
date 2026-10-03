@@ -5,6 +5,7 @@ is in `../../problem.md`. Resource estimates are in `docs/RESOURCE_ESTIMATES.md`
 implementation report is in `docs/PIPELINE_REPORT.md`.
 
 ```
+run_pipeline.py                                        runs every stage in order
 src/
   training/00_resource_check.py … 11_predict_test.py   one stage per script, resumable
   utils/  config io gpu normalization records blocking features metrics decision model
@@ -21,7 +22,18 @@ pip install -r requirements.txt            # see the torch / xgboost notes insid
 python src/training/00_resource_check.py --probe-xgboost
 ```
 
-## Run (from `code/business_entity_resolution/`)
+## Run everything with one command (from `code/business_entity_resolution/`)
+```bash
+python run_pipeline.py --dry-run      # show the 16 stage commands without running anything
+python run_pipeline.py                # train stages 00-10, test stages, then 11 (submission files)
+```
+Each stage runs in its own process, so RAM and VRAM are freed between stages. The output is logged
+to `work/logs/pipeline_<time>.log`, and the run stops at the first failing stage. Rerunning the same
+command resumes, because finished stages are skipped. Useful options:
+`--train-only`, `--test-only`, `--from 05-train --to 09`, `--only 04-train`,
+`--force-stages 07 08`, `--stage-args 04-train="--k 40"`, `--backend xgboost`, `--probe-xgboost`.
+
+## Run stage by stage (same commands the runner issues)
 ```bash
 # training split
 python src/training/01_normalize.py            --split train
