@@ -1,0 +1,12 @@
+# data and generated outputs (multi-GB, reproducible from the pipeline)
+dataset/
+work/
+artifacts/
+output/
+
+# python
+__pycache__/
+*.pyc
+
+# atomic-write leftovers
+*.tmp
