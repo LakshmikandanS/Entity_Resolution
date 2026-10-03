@@ -1,0 +1,87 @@
+# Neural / hybrid experiment configuration.
+# Paths are relative to `paths.root`, which is relative to this file's directory.
+
+paths:
+  root: ../..                      # repository root
+  dataset: dataset                 # contains train/ and test/
+  work: experiments/neural/work    # all intermediates (gitignored)
+
+baseline:                          # the classical pipeline, imported read-only via baseline_api.py
+  src: code/business_entity_resolution/src
+  data_dir: null                   # null -> paths.dataset
+  work_dir: work                   # baseline --work-dir default (repo root)
+  artifacts_dir: artifacts         # baseline --artifacts-dir default (repo root)
+
+split:
+  salt: "neural-encoder-split-v1"
+  encoder_frac: 0.10               # deterministic share of TRAIN S1 used only to fine-tune the encoder
+  encoder_val_frac: 0.02           # share of encoder-split S1 held out for encoder validation
+
+model:
+  name_or_path: intfloat/multilingual-e5-small   # MIT licence, 118M params
+  proj_dim: 128
+  max_len_name: 32
+  max_len_addr: 64
+  prefix_name: "query: name: "
+  prefix_addr: "query: address: "
+  freeze_word_embeddings: true
+
+encoder_data:
+  hard_neg_pool: 10                # top non-link candidates kept per S1 (by baseline candidate rank)
+  use_cand_rank: true              # false -> random non-links if the baseline exposes no candidate rank
+  candidate_scan_rank: 21          # read candidates with rank <= this (pool + max 11 links per S1)
+  batch_rows: 1000000              # pair-table scan batch
+
+train:
+  seed: 13
+  groups_per_batch: 64             # 1 S1 + 1 positive + hard_negs per group
+  min_groups_per_batch: 8          # OOM back-off floor
+  hard_negs: 3
+  epochs: 1                        # one pass over all (S1, positive) groups
+  lr_backbone: 3.0e-5
+  lr_proj: 1.0e-3
+  weight_decay: 0.01
+  warmup_frac: 0.05
+  grad_clip: 1.0
+  temperature: 0.05
+  loss_w_comb: 1.0
+  loss_w_name: 0.5
+  loss_w_addr: 0.5
+  bf16: true
+  grad_checkpointing: true
+  vram_fraction: 0.85              # hard cap of this process' VRAM share
+  log_every: 50
+  eval_every: 2000
+  ckpt_every: 1000
+  val_batches: 50
+
+embed:
+  dtype: float16
+  batch_name: 2048
+  batch_addr: 1024
+  csv_block_bytes: 16777216        # pyarrow read block (~160k rows); fixed for resumability
+  flush_every_blocks: 4
+
+similarity:
+  target_block_rows: 1000000       # target embeddings resident on GPU per block
+  pair_chunk: 1000000              # pairs gathered per GPU step
+  pass2_chunk: 2000000
+  keep_tmp: false
+
+compare:
+  arms: [A, B]                     # A = baseline features, B = baseline + neural features
+  # model settings mirror baseline 07_train.py defaults; identical for both arms
+  backend: auto                    # auto | xgboost | hgb (auto = GPU XGBoost if installed, else HGB)
+  max_gpu_gb: 6.0
+  n_threads: 4
+  iter_rows: 500000
+  max_train_rows: 3000000          # HGB fallback cap (entity-level subsample, as in baseline)
+  min_threshold: 0.05              # as baseline 09_tune_threshold.py
+  predict_chunk: 1000000
+  hist_bins: 200
+  low_name_sim_feature: null       # optional baseline feature column for the "noisy name" segment
+  low_name_sim_threshold: 0.33
+
+predict:
+  chunk: 1000000
+  out_dir: experiments/neural/work/output_test
