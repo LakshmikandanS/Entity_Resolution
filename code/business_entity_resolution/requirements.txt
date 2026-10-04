@@ -9,7 +9,7 @@ psutil==7.2.2
 #   pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
 torch==2.11.0
 
-# OPTIONAL, not installed at the time of writing. Enables the GPU pair classifier (Apache-2.0).
-# After installing, run `python src/training/00_resource_check.py --probe-xgboost` to confirm the
-# wheel runs on this GPU; otherwise stages 07/08/11 fall back to sklearn HistGradientBoosting (CPU).
-# xgboost==<pick a 3.x release and pin it here>
+# GPU pair classifier (Apache-2.0). Verified on the RTX 5060 with
+# `python src/training/00_resource_check.py --probe-xgboost`. Without it, stages 07/08/11 fall back
+# to sklearn HistGradientBoosting on CPU.
+xgboost==3.4.1

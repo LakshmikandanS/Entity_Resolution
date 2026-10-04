@@ -6,6 +6,7 @@ XGBoost never sees a materialised float matrix: an `xgboost.DataIter` streams pa
 import inspect
 import os
 import time
+import warnings
 
 import numpy as np
 import pyarrow.parquet as pq
@@ -200,7 +201,12 @@ def predict(model, X):
     if backend == "xgboost":
         best = getattr(m, "best_iteration", None)
         rng = (0, int(best) + 1) if best is not None else (0, 0)
-        return m.inplace_predict(X, iteration_range=rng).astype(np.float32)
+        with warnings.catch_warnings():
+            # A CUDA booster given host (numpy) data copies it through a DMatrix and still predicts
+            # on the GPU; on-device input would need cupy, which this environment does not have.
+            warnings.filterwarnings("ignore", message=".*mismatched devices.*")
+            out = m.inplace_predict(X, iteration_range=rng)
+        return out.astype(np.float32)
     return m.predict_proba(X)[:, 1].astype(np.float32)
 
 
