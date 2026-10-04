@@ -40,8 +40,9 @@ python experiments/neural/tests/smoke_test.py --out <scratch dir>
    stages: `python code/business_entity_resolution/run_pipeline.py --only 01-test 03-test 04-test 05-test`.
    Every neural script checks this first and prints the command to run if a stage is missing.
 2. Python packages already present on this machine: torch 2.11+cu128, transformers 5.5, pyarrow, polars,
-   psutil, pyyaml, scikit-learn. `xgboost` is optional exactly as in the baseline: if it is missing, both arms
-   use the baseline's HistGradientBoosting fallback (CPU, 3M-row entity subsample).
+   psutil, pyyaml, scikit-learn. `xgboost` 3.4.1 is installed and verified on the RTX 5060 (baseline
+   requirements.txt), so both arms train with GPU XGBoost; the n05 XGBoost path is tested on synthetic data.
+   Without xgboost both arms would fall back to the baseline's HistGradientBoosting (CPU).
 3. `intfloat/multilingual-e5-small` (MIT licence, 118M parameters, ~470 MB) comes from Hugging Face. It is
    already in this machine's Hugging Face cache (downloaded while testing). That is a model download, not an
    entity lookup; no data leaves the machine.

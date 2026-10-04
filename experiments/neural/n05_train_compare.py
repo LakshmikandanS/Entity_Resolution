@@ -344,10 +344,14 @@ def render_md(r) -> str:
     for f, d in r["neural_feature_distributions"].items():
         L.append(f"| {f} | {fmt(d['auc_pos_vs_neg'])} | {d['nan_rate']:.4f} | {q(d['pos'])} | {q(d['neg'])} | "
                  f"{fmt(d['neg_owned_eval']['p50'], 3)} | {fmt(d['neg_enc_target']['p50'], 3)} |")
-    L += ["", "## Runtime and peaks", "", "| Script | Stage | s | peak RSS GB | peak VRAM GB |", "|---|---|---:|---:|---:|"]
+    L += ["", "## Runtime and peaks", "",
+          "torch VRAM = this process's torch allocations; GPU in use = device-wide (includes XGBoost and any other "
+          "process on the GPU).", "",
+          "| Script | Stage | s | peak RSS GB | torch VRAM GB | GPU in use GB |", "|---|---|---:|---:|---:|---:|"]
     for k, v in r["runtime_and_peaks"].items():
         for st, x in (v.get("stages") or {}).items():
-            L.append(f"| {k} | {st} | {x['seconds']} | {x['peak_rss_gb']} | {x['peak_vram_gb']} |")
+            L.append(f"| {k} | {st} | {x['seconds']} | {x['peak_rss_gb']} | {x['peak_vram_gb']} | "
+                     f"{x.get('peak_gpu_device_gb', '')} |")
     L += ["", "## Disk (experiments/neural/work)", ""] + [f"- {k}: {v} GB" for k, v in r["disk_gb"].items()]
     return "\n".join(L) + "\n"
 

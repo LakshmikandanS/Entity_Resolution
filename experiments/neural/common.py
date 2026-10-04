@@ -236,7 +236,9 @@ def gb(nbytes: float) -> float:
 
 # --------------------------------------------------------------------------------------- resources
 class Monitor:
-    """Tracks wall time, peak RSS (sampled every 0.5 s) and peak CUDA memory per stage; writes a JSON log."""
+    """Tracks per stage: wall time, peak RSS of this process, peak torch CUDA allocation of this process, and
+    peak device-wide GPU memory in use (NVML; includes other processes and non-torch users such as
+    XGBoost). RSS and device memory are sampled every 0.5 s. Writes a JSON log."""
 
     def __init__(self, cfg: Config, script: str):
         import psutil
@@ -245,44 +247,70 @@ class Monitor:
         self.path = cfg.wpath("runlog", f"{script}.json")
         self.log = {"script": script, "started": time.strftime("%Y-%m-%d %H:%M:%S"), "stages": {}}
         self.peak_rss = 0
+        self.peak_dev = 0
+        self._nvml = self._nvml_handle()
         self._stop = threading.Event()
         self._t = threading.Thread(target=self._sample, daemon=True)
         self._t.start()
         self._t0 = time.time()
 
-    def _sample(self):
-        while not self._stop.is_set():
-            self.peak_rss = max(self.peak_rss, self._proc.memory_info().rss)
-            self._stop.wait(0.5)
-
     @staticmethod
-    def cuda_peak() -> int:
+    def _nvml_handle():
         try:
-            import torch
+            import pynvml
 
-            return torch.cuda.max_memory_allocated() if torch.cuda.is_available() else 0
+            pynvml.nvmlInit()
+            return pynvml.nvmlDeviceGetHandleByIndex(0)
+        except Exception:
+            return None
+
+    def _device_used(self) -> int:
+        if self._nvml is None:
+            return 0
+        try:
+            import pynvml
+
+            return int(pynvml.nvmlDeviceGetMemoryInfo(self._nvml).used)
         except Exception:
             return 0
 
+    def _sample(self):
+        while not self._stop.is_set():
+            self.peak_rss = max(self.peak_rss, self._proc.memory_info().rss)
+            self.peak_dev = max(self.peak_dev, self._device_used())
+            self._stop.wait(0.5)
+
+    @staticmethod
+    def _torch_cuda():
+        """torch.cuda only if this process already uses CUDA (never creates a CUDA context just to measure)."""
+        t = sys.modules.get("torch")
+        try:
+            return t.cuda if t is not None and t.cuda.is_available() and t.cuda.is_initialized() else None
+        except Exception:
+            return None
+
+    @classmethod
+    def cuda_peak(cls) -> int:
+        c = cls._torch_cuda()
+        return c.max_memory_allocated() if c is not None else 0
+
     @contextmanager
     def stage(self, name: str):
-        t0, rss0 = time.time(), self.peak_rss
+        t0, rss0, dev0 = time.time(), self.peak_rss, self.peak_dev
         self.peak_rss = self._proc.memory_info().rss
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                torch.cuda.reset_peak_memory_stats()
-        except Exception:
-            pass
+        self.peak_dev = self._device_used()
+        c = self._torch_cuda()
+        if c is not None:
+            c.reset_peak_memory_stats()
         print(f"[{time.strftime('%H:%M:%S')}] >> {name}", flush=True)
         try:
             yield
         finally:
             rec = {"seconds": round(time.time() - t0, 1), "peak_rss_gb": gb(self.peak_rss),
-                   "peak_vram_gb": gb(self.cuda_peak())}
+                   "peak_vram_gb": gb(self.cuda_peak()), "peak_gpu_device_gb": gb(self.peak_dev)}
             self.log["stages"][name] = rec
             self.peak_rss = max(self.peak_rss, rss0)
+            self.peak_dev = max(self.peak_dev, dev0)
             print(f"[{time.strftime('%H:%M:%S')}] << {name} {rec}", flush=True)
             self.flush()
 
