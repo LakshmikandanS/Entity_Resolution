@@ -174,7 +174,9 @@ def main():
     summary = {"started": stamp, "config": args.config, "stages": [], "log": log_path}
     t_all = time.time()
     with open(log_path, "a", encoding="utf-8") as log:
-        print(f"Neural pipeline: {' -> '.join(s for s, _ in commands)}\nLog: {log_path}\n")
+        head = f"Neural pipeline: {' -> '.join(s for s, _ in commands)}\nLog: {log_path}\n"
+        print(head)
+        log.write(head)
         for sid, cmd in commands:
             banner = f"\n{'=' * 78}\n[{sid}] {os.path.basename(cmd[2])}  ({time.strftime('%H:%M:%S')})\n{'=' * 78}\n"
             sys.stdout.write(banner)
@@ -189,15 +191,24 @@ def main():
                 sys.stdout.write(msg)
                 log.write(msg)
                 break
-            sys.stdout.write(f"[{sid}] done in {dt / 60:.1f} min\n")
+            done = f"[{sid}] done in {dt / 60:.1f} min\n"
+            sys.stdout.write(done)
+            log.write(done)
+            log.flush()
     summary["seconds_total"] = round(time.time() - t_all, 1)
     summary["ok"] = len(summary["stages"]) == len(commands) and all(s["returncode"] == 0 for s in summary["stages"])
+    os.makedirs(os.path.join(work, "logs"), exist_ok=True)
     with open(os.path.join(work, "logs", f"run_{stamp}.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
-    print("\nStage times:")
-    for s in summary["stages"]:
-        print(f"  {s['stage']:10s} {'ok' if s['returncode'] == 0 else 'FAILED':7s} {s['seconds'] / 60:7.1f} min")
-    print(f"Total {summary['seconds_total'] / 60:.1f} min. {'All stages succeeded.' if summary['ok'] else 'Stopped early.'}")
+    lines = ["", "Stage times:"]
+    lines += [f"  {s['stage']:10s} {'ok' if s['returncode'] == 0 else 'FAILED':7s} {s['seconds'] / 60:7.1f} min"
+              for s in summary["stages"]]
+    lines.append(f"Total {summary['seconds_total'] / 60:.1f} min. "
+                 f"{'All stages succeeded.' if summary['ok'] else 'Stopped early.'}")
+    text = "\n".join(lines) + "\n"
+    sys.stdout.write(text)
+    with open(log_path, "a", encoding="utf-8") as log:    # the summary also lands in the log file
+        log.write(text)
     sys.exit(0 if summary["ok"] else 1)
 
 
