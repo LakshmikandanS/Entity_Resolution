@@ -112,6 +112,12 @@ def run(cmd, log):
 
 
 def main():
+    # Stage logs contain Indic and accented text; never let a narrow console encoding kill the run.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", default=os.path.join(ROOT, "dataset"))
     ap.add_argument("--work-dir", default=os.path.join(ROOT, "work"))
