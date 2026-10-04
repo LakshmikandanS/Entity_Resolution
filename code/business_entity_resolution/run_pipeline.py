@@ -163,32 +163,40 @@ def main():
     summary = {"started": stamp, "stages": [], "log": log_path}
     t_all = time.time()
     with open(log_path, "a", encoding="utf-8") as log:
-        print(f"Pipeline: {' -> '.join(selected)}\nLog: {log_path}\n")
+        def emit(text, to_log=True):
+            """Console and log file get the same runner messages, flushed immediately."""
+            sys.stdout.write(text)
+            sys.stdout.flush()
+            if to_log:
+                log.write(text)
+                log.flush()
+
+        emit(f"Pipeline: {' -> '.join(selected)}\nLog: {log_path}\n\n")
         for sid, cmd in commands:
-            banner = f"\n{'=' * 78}\n[{sid}] {' '.join(cmd[2:3])}  ({time.strftime('%H:%M:%S')})\n{'=' * 78}\n"
-            sys.stdout.write(banner)
-            log.write(banner + " ".join(cmd) + "\n")
+            emit(f"\n{'=' * 78}\n[{sid}] {' '.join(cmd[2:3])}  ({time.strftime('%H:%M:%S')})\n{'=' * 78}\n")
+            log.write(" ".join(cmd) + "\n")
             t0 = time.time()
             rc = run(cmd, log)
             dt = time.time() - t0
             summary["stages"].append({"stage": sid, "returncode": rc, "seconds": round(dt, 1)})
             if rc != 0:
-                msg = (f"\nStage {sid} FAILED (exit code {rc}) after {dt / 60:.1f} min.\n"
-                       f"Fix the cause, then rerun the same command: finished stages are skipped.\n"
-                       f"To restart from this stage only: python run_pipeline.py --from {sid}\n")
-                sys.stdout.write(msg)
-                log.write(msg)
+                emit(f"\nStage {sid} FAILED (exit code {rc}) after {dt / 60:.1f} min.\n"
+                     f"Fix the cause, then rerun the same command: finished stages are skipped.\n"
+                     f"To restart from this stage only: python run_pipeline.py --from {sid}\n")
                 break
-            sys.stdout.write(f"[{sid}] done in {dt / 60:.1f} min\n")
-    summary["seconds_total"] = round(time.time() - t_all, 1)
-    summary["ok"] = all(s["returncode"] == 0 for s in summary["stages"]) and len(summary["stages"]) == len(commands)
+            emit(f"[{sid}] done in {dt / 60:.1f} min\n")
+        summary["seconds_total"] = round(time.time() - t_all, 1)
+        summary["ok"] = all(s["returncode"] == 0 for s in summary["stages"]) and len(summary["stages"]) == len(commands)
+        lines = ["", "Stage times:"]
+        lines += [f"  {s['stage']:9s} {'ok' if s['returncode'] == 0 else 'FAILED':7s} {s['seconds'] / 60:7.1f} min"
+                  for s in summary["stages"]]
+        lines.append(f"Total {summary['seconds_total'] / 60:.1f} min. "
+                     f"{'PIPELINE COMPLETE: all stages succeeded.' if summary['ok'] else 'PIPELINE STOPPED EARLY.'}"
+                     f"  ({time.strftime('%H:%M:%S')})")
+        emit("\n".join(lines) + "\n")
     os.makedirs(os.path.join(args.artifacts_dir, "pipeline_runs"), exist_ok=True)
     with open(os.path.join(args.artifacts_dir, "pipeline_runs", f"run_{stamp}.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
-    print("\nStage times:")
-    for s in summary["stages"]:
-        print(f"  {s['stage']:9s} {'ok' if s['returncode'] == 0 else 'FAILED':7s} {s['seconds'] / 60:7.1f} min")
-    print(f"Total {summary['seconds_total'] / 60:.1f} min. {'All stages succeeded.' if summary['ok'] else 'Stopped early.'}")
     sys.exit(0 if summary["ok"] else 1)
 
 
