@@ -198,7 +198,14 @@ def atomic_write_json(path: Path, obj) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(obj, indent=2, default=_json_default), encoding="utf-8")
-    os.replace(tmp, path)
+    for attempt in range(10):   # Windows: a reader/indexer/antivirus can briefly lock the target
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 9:
+                raise
+            time.sleep(0.5 * (attempt + 1))
 
 
 def _json_default(o):
@@ -326,7 +333,10 @@ class Monitor:
 
     def flush(self):
         self.log["total_seconds"] = round(time.time() - self._t0, 1)
-        atomic_write_json(self.path, self.log)
+        try:
+            atomic_write_json(self.path, self.log)
+        except OSError as e:   # resource logging must never fail a finished stage
+            print(f"warning: could not write {self.path}: {e}", flush=True)
 
     def close(self):
         self._stop.set()

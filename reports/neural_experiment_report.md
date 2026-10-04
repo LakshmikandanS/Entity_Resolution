@@ -1,4 +1,4 @@
-# Neural bi-encoder experiment: status report
+# Neural bi-encoder experiment: results report
 
 Date: 2026-10-04. Machine: RTX 5060 Laptop (8 GB), 16 GB RAM, Windows.
 Code: `experiments/neural/` (run with `python experiments/neural/run_neural.py`). Baseline numbers are in the
@@ -7,17 +7,49 @@ Code: `experiments/neural/` (run with `python experiments/neural/run_neural.py`)
 
 ## Summary
 
-* The train side of the experiment is complete on the full real data: encoder training, embeddings for all
-  12.5M train records, and 8 neural features for all 69.2M baseline candidate pairs.
-* **The A/B comparison (does adding the neural features to the baseline model raise macro-F0.5?) has not run
-  yet.** The run was stopped on request at 17:34 IST, 2 minutes into the first of its four XGBoost fits.
-  Test-side steps have not run either. No macro-F0.5 number exists for the hybrid model yet.
-* Early signal, from a 4.5M-pair sample of entities the encoder never saw: the combined embedding similarity
-  alone separates true from false candidate pairs better than any single baseline score I checked (AUC 0.9988
-  vs 0.9717 for the baseline's candidate rank), and it puts a true match first for 99.8% of entities vs 97.8%
-  for the baseline's candidate rank. This is a single-feature comparison, not a model result: the baseline's
-  XGBoost already combines 64 features and reaches OOF macro-F0.5 0.9720, so the A/B is what decides whether
-  the neural features add anything.
+**Adding the 8 neural features to the baseline's 64 features raises out-of-fold macro-F0.5 from 0.97167 to
+0.97957 (+0.0079).** Both arms used identical training rows, folds, XGBoost settings, target exclusivity and
+threshold search; only the feature list differed. They were scored on the 1,986,276 train entities the encoder
+never saw (singletons included). The full run, train and test, is complete, and the hybrid's test submission
+files pass the format check.
+
+| | A: baseline features (64) | B: + neural features (72) |
+|---|---:|---:|
+| OOF macro-F0.5 | 0.97167 | **0.97957** |
+| threshold tau | 0.7023 | 0.7147 |
+| singletons F0.5 | 0.9707 | **0.9850** |
+| non-singletons F0.5 | 0.9717 | **0.9792** |
+| micro precision / recall | 0.9926 / 0.9349 | **0.9957 / 0.9490** |
+| false matches | 47,786 | **28,238** (-41%) |
+| missed matches | 447,538 | **350,809** (-22%) |
+
+Reference: the baseline's own stage 09 reports 0.97201 on all train entities (encoder split included, full
+training rows). Arm A is close to it; the small gap comes from the different population and from both arms
+training on the same 83.6% entity subsample (RAM cap). Absolute baseline details are in the baseline report.
+
+Per segment, B beats A everywhere:
+
+| Segment | Entities | F0.5 A | F0.5 B | B - A |
+|---|---:|---:|---:|---:|
+| all | 1,986,276 | 0.9717 | 0.9796 | +0.0079 |
+| singletons | 110,940 | 0.9707 | 0.9850 | +0.0143 |
+| 1 link | 107,291 | 0.9159 | 0.9336 | +0.0177 |
+| 2-3 links | 815,204 | 0.9709 | 0.9792 | +0.0083 |
+| 4+ links | 952,841 | 0.9787 | 0.9844 | +0.0057 |
+| has an Indic-script name link | 245,430 | 0.9791 | 0.9873 | +0.0082 |
+| has an empty-address link | 220,202 | 0.9440 | 0.9531 | +0.0091 |
+| India | 794,992 | 0.9684 | 0.9817 | +0.0133 |
+| US | 1,191,284 | 0.9738 | 0.9781 | +0.0043 |
+
+Leakage check: negatives whose target belongs to an encoder-training entity and negatives whose target belongs
+to another evaluation entity have identical medians on every neural feature (e.g. nn_cos_comb 0.350 vs
+0.350), so the encoder did not memorise anything that flatters the evaluation.
+
+Test submission (arm B, tau 0.7147 from train OOF, mean of the two fold models):
+`experiments/neural/work/output_test/arm_B/matching_results.tsv` and `candidate_pairs.tsv`. 1,732,544 S1 rows,
+5,791,229 links (baseline: 5,730,818), 98,725 entities left empty (5.7%; train singleton rate 5.6%), same
+54,724,105 candidate pairs as the baseline. Local format check (baseline `src/tools/check_submission.py`): PASS.
+It has not been copied to `output/`, which still holds the baseline submission.
 
 ## What ran
 
@@ -27,7 +59,9 @@ Code: `experiments/neural/` (run with `python experiments/neural/run_neural.py`)
 | n02 encoder training | multilingual-e5-small (MIT, 118M params, 21.7M trained), 384→128 projection, InfoNCE with hard + in-batch negatives, 11,678 steps of 64 groups | 28.2 min after resume (+ 66 min before the pause, slowed by GPU sharing) | 3.9 GB | 1.8 / 4.2 GB** |
 | n03 train embeddings | name + address embeddings for 12,526,821 records, fp16 memmaps | 45.5 min | 5.3 GB | 1.0 / 2.3 GB |
 | n04 pair similarities | 8 features for 69,150,434 candidate pairs, 11 target blocks on GPU | 0.7 min | 5.4 GB | 3.1 / 3.5 GB |
-| n05 A/B (partial) | eval-split training rows built (29.6M rows, 6.68M positives); stopped during the first XGBoost fit | 1.1 min done | 4.6 GB at stop | n/a |
+| n05 A/B | eval-split training rows (29.6M rows, 6.68M positives), 4 GPU XGBoost fits, OOF for both arms, report | 1.1 + 25.4 min | 9.2 GB in arm B's fits | 5.9 GB device |
+| n03 test embeddings | 11,702,133 test records | 42.3 min | 3.6 GB | 1.0 / 2.3 GB |
+| n04 + n06 test | similarities for 54.7M pairs, predictions, exclusivity, TSVs | 5.1 min | 3.7 GB | 1.1 GB device |
 
 \* Windows working set, which includes memory-mapped embedding files the OS can release; the private
 footprint is lower. \*\* Device-wide, while the baseline was also using the GPU.
@@ -68,28 +102,16 @@ Sample: the first 5M candidate pairs, restricted to evaluation-split entities (n
 Top-1 precision per entity (135,550 entities with at least one true candidate): is the best-scored candidate
 a true match? nn_cos_comb 0.9977, baseline blk_rank 0.9775, baseline h_score 0.9329.
 
-Caveats: this compares single features, not models, on a sample of the training split. The baseline model's
-real strength is its OOF macro-F0.5 of 0.9720 with all features combined. The leakage check the A/B report runs
-(negatives owned by encoder-split vs evaluation-split entities) passed on the 20k-entity test sample but has
-not run on the full data yet.
+This compares single features on a sample; the model-level answer is the A/B in the summary. On all
+62.2M evaluation pairs the A/B report gives nn_cos_comb an AUC of 0.9987, consistent with this sample.
 
-## What is left, and how to resume
+## Reproduce
 
-Everything finished is saved under `experiments/neural/work/` (9.9 GB: embeddings 6.1 GB, A/B training rows
-1.4 GB, features 1.1 GB, pair metadata 0.6 GB, model 0.5 GB, encoder data 0.2 GB). To continue:
+Everything is saved under `experiments/neural/work/` (gitignored, ~12 GB). From the repository root, after
+the baseline train and test stages: `python experiments/neural/run_neural.py`. Finished steps are skipped.
 
-```
-python experiments/neural/run_neural.py --from n05
-```
-
-| Remaining step | Estimate | Notes |
-|---|---:|---|
-| n05 A/B: 4 GPU XGBoost fits | ~25 min | ~4.6-5 GB RAM; both arms train on the same 83.6% entity subsample (RAM cap) |
-| n05: OOF predictions for both arms + report | ~20-25 min | writes `experiments/neural/work/compare/ab_report.md` |
-| n03 test embeddings (11.7M records) | ~40 min | ~1 GB VRAM |
-| n04 test similarities + n06 test predictions | ~20 min | writes `experiments/neural/work/output_test/arm_B/` |
-
-Total about 1 h 45 min, best run with the machine otherwise idle (n05 needs up to ~5 GB RAM).
+Resource notes: the arm-B XGBoost fits peaked at 9.2 GB working set, above the 5 GB estimate in `config.yaml`
+(`compare.max_train_ram_gb`); they need the machine to themselves.
 
 ## Run log
 
@@ -98,8 +120,12 @@ Total about 1 h 45 min, best run with the machine otherwise idle (n05 needs up t
 * 15:53 n02 paused at step 7,000 at the coordinator's request; 16:16 resumed from the checkpoint.
 * 16:44 n02 done; 17:30 n03 and n04 done; 17:31 n05 started.
 * 17:34 stopped on request (machine needed for other work).
+* 18:56 resumed from n05. 19:21 A/B done (+0.0079).
+* 20:04 test embeddings saved, then the step failed writing its timing log (Windows file lock, WinError 5);
+  fixed with retries and a non-fatal log write, resumed at 20:05.
+* 20:10 test predictions and submission files written; format check PASS.
 
 Fixes made along the way (all in `experiments/neural/`, committed on `training-pipeline`): clear
 prerequisite messages instead of tracebacks, a corrected like-for-like leakage check, lighter checkpoints,
-UTF-8-safe output for Indic text on Windows consoles, device-wide GPU memory in run logs, and a host-RAM cap
+UTF-8-safe output for Indic text on Windows consoles, retrying/non-fatal run-log writes, device-wide GPU memory in run logs, and a host-RAM cap
 for the A/B's XGBoost fits.
