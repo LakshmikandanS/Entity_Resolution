@@ -101,9 +101,11 @@ def run(cmd, log):
     env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
                             text=True, encoding="utf-8", errors="replace", bufsize=1)
-    for line in proc.stdout:
+    for line in proc.stdout:   # flush every line so the console and the log file are always current
         sys.stdout.write(line)
+        sys.stdout.flush()
         log.write(line)
+        log.flush()
     proc.wait()
     log.flush()
     return proc.returncode
