@@ -1,12 +1,56 @@
 # Pipeline implementation report
 
-Status: **code written, not executed on the dataset** (per instructions). Verification so far:
-- `py_compile` of every module and all 12 scripts' `--help` work.
-- Unit checks of pure functions on hand-written inputs, with no dataset access:
-  - batched GPU Levenshtein matches a brute-force implementation (max error 4e-8 on 300 random pairs);
-  - the exact macro-F0.5 sweep matches brute-force recomputation (error 1e-16);
-  - the transliterator reproduces problem.md's example (`कंस्ट्रक्शन` → `kanstrakshan`);
-  - the competition and exclusivity helpers give the expected values on a toy example.
+Status: **run end to end on the full data on 2026-10-04** (RTX 5060 Laptop GPU, 16 GB RAM).
+Both output files were written and passed the local format check
+(`src/tools/check_submission.py`, because the official `utils/validate_submission.py` is not in this checkout).
+
+## 0. Measured results
+| | |
+|---|---|
+| Blocking recall, train (K = 32, GPU re-rank) | **0.9713** (7,419,426 / 7,638,365 links); recall@10 0.956, @20 0.967; 91.1% of S1s have every match covered |
+| Train candidate pairs | 69.15M (31.3 per S1) |
+| Training set | 32.87M rows: 7.42M positives, 25.45M negatives (97% hard) |
+| XGBoost (2 folds, CUDA) | 1,500 rounds each, val logloss 0.0116, ~7 min per fold |
+| **OOF macro F0.5 (train, cross-fitted, incl. singletons)** | **0.9720** at τ = 0.6975 |
+| Singletons / non-singletons | 0.9711 / 0.9721 |
+| Micro precision / recall | 0.9927 / 0.9354 (FP 52,190; FN 493,445, of which 218,939 blocking never proposed) |
+| Test candidate pairs | 54.72M for 1,732,544 S1s (38 without candidates) |
+| Test predictions | 5,730,818 links; 94.2% of S1s matched, 5.78% empty (train singleton rate 5.6%); no target assigned twice |
+
+The OOF score is measured on training entities with cross-fitting. The test split was never used
+for tuning.
+
+### Measured wall time and resources
+| Stage | Train | Test | Peak RSS* | Peak VRAM |
+|---|---|---|---|---|
+| 01 normalize | ~10 min (earlier run) | 3 min | 1.4 GB | 0 |
+| 02 labels + rewrite map | 0.6 min | — | — | 0 |
+| 03 records + index | 14 min | 13 min | 3.2 GB | 0 |
+| 04 candidates + GPU re-rank | 40 min | 28 min | 2.1 GB | 1.9 GB |
+| 05 features (GPU) | 12 min | 27 min† | 4.9 GB | 0.5 GB |
+| 06 training set | 2 min | — | 1.4 GB | 0 |
+| 07 XGBoost, 2 folds | 14 min | — | **5.9 GB** | 3.2 GB (device total) |
+| 08 OOF / 09 τ / 10 bundle | 4 min | — | 1.0 GB | 0.3 GB |
+| 11 predict + write + check | — | 24 min | 1.7 GB | 0.3 GB |
+
+\* RSS includes pages of the memory-mapped record files, which the OS can evict; in 03 and 05
+most of the reported RSS is mapped record pages.
+† Slowed by sharing the GPU with the neural experiment; train-side speed was 165k pairs/s.
+
+**Over the estimate:** stage 07 held about 5.9 GB RSS, because XGBoost builds the
+`QuantileDMatrix` on the host from numpy batches (cupy is not installed, so it cannot be built on the
+device) and keeps it alongside the device copy. Available RAM dipped to ~1.7 GB during that stage.
+The pre-implementation estimate of 0.5 GB was wrong. If RAM is tighter, set `--entity-frac 0.6` in
+stage 06 or lower `MAX_GPU_MEMORY_GB` so 07 subsamples whole entities.
+
+### Changes made during the run
+- Blocking recall was 0.927 with IDF-sum ranking. Stage 04 now re-ranks every aggregated candidate
+  on the GPU (`utils/rerank.py`), and the N/A key cap was raised from 300 to 1000.
+- Stages record an input signature and clear outputs built from different inputs, so a rerun can no
+  longer reuse stale candidate shards.
+- The runner flushes output line by line and writes UTF-8 to the console. A Hindi example line had
+  crashed it under the Windows code page.
+- xgboost 3.4.1 (CUDA build) was installed and pinned.
 
 Evidence base: `problem.md`. The `analysis/` and `baseline/` folders it references are not in this
 checkout, so every rule implemented here follows the decisions D1–D7 and the numbers written in

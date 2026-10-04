@@ -57,6 +57,7 @@ def normalize_source(paths, src, chunk_rows, force):
             done = pq.ParquetFile(dest).metadata.num_rows
             if done != n:
                 fail(f"{dest} has {done} rows but the input batch has {n}; rerun with --force")
+            countries.update(pq.read_table(dest, columns=["country"]).column(0).to_pylist())
             row0 += n
             part += 1
             continue
