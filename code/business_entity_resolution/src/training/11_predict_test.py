@@ -163,7 +163,13 @@ def main():
         if rc != 0:
             sys.exit(rc)
     else:
-        log(f"NOTE: {validator} not found; run the official validator before submitting")
+        log(f"NOTE: {validator} not found; running the local format check instead")
+        checker = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "check_submission.py")
+        rc = subprocess.run([sys.executable, checker, "--matching", m_path, "--candidate", c_path,
+                             "--test-dir", os.path.join(paths.data_dir, "test")]).returncode
+        log(f"check_submission.py exit code {rc}")
+        if rc != 0:
+            sys.exit(rc)
 
 
 if __name__ == "__main__":
