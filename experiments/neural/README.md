@@ -46,7 +46,24 @@ python experiments/neural/tests/smoke_test.py --out <scratch dir>
    already in this machine's Hugging Face cache (downloaded while testing). That is a model download, not an
    entity lookup; no data leaves the machine.
 
-## Commands (from the repository root; not yet run on the full real data)
+## One command for the whole flow
+
+```bash
+python experiments/neural/run_neural.py --with-baseline   # missing baseline stages, then n01 .. n06
+python experiments/neural/run_neural.py                   # n01 .. n06 when the baseline is already done
+python experiments/neural/run_neural.py --dry-run         # print the commands only
+python experiments/neural/run_neural.py --train-only      # n01 .. n05 (A/B report)
+python experiments/neural/run_neural.py --test-only       # n03-test, n04-test, n06
+python experiments/neural/run_neural.py --from n03-train --to n05
+python experiments/neural/run_neural.py --stage-args n02="--max-steps 2000"
+```
+
+Each stage runs in its own process; output goes to the screen and to
+`experiments/neural/work/logs/neural_<time>.log`, with a per-stage summary in `work/logs/run_<time>.json`.
+It stops at the first failing stage, and rerunning the same command resumes. Tested end to end on the
+20k-S1 real-data sample (8 stages, 3.1 min with a tiny model).
+
+## Commands step by step (from the repository root; not yet run on the full real data)
 
 ```bash
 # 1. encoder fine-tuning data from the deterministic 10% encoder split of TRAIN S1
