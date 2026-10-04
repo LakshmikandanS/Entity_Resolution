@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils import config  # noqa: E402
 from utils.features import FEATURE_COLUMNS  # noqa: E402
 from utils.gpu import GB, check_ram, gpu_report, ram_report, release_gpu  # noqa: E402
-from utils.io import (add_common_args, list_shards, log, paths_from_args, read_json, read_manifest,  # noqa: E402
+from utils.io import (add_common_args, begin_stage, list_shards, log, paths_from_args, read_json, read_manifest, upstream_stamp,  # noqa: E402
                       write_json, write_manifest)
 from utils.model import choose_backend, save_model, train_hgb, train_xgboost  # noqa: E402
 
@@ -36,6 +36,10 @@ def main():
     n_folds = read_manifest(paths.labels, "stage 02")["n_folds"]
     shards = list_shards(paths.trainset)
     backend, device = choose_backend(args.backend)
+    sig = {"stage": "07", "trainset": upstream_stamp(paths.trainset), "backend": backend, "device": device,
+           "max_train_rows": args.max_train_rows if backend == "hgb" else None}
+    if args.folds is None and begin_stage(paths.models, sig, args.force):
+        return
     log(f"backend {backend} on {device}; {tman['rows']:,} training rows in {len(shards)} shards")
     if backend == "hgb":
         log("NOTE: xgboost with CUDA not available -> CPU HistGradientBoosting with "

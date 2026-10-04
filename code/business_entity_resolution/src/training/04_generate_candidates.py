@@ -25,7 +25,7 @@ from utils.blocking import FAMILIES, BlockingIndex, S1Keys, generate_candidates 
 from utils.gpu import GB, check_ram, get_device, gpu_report, release_gpu  # noqa: E402
 from utils.rerank import GPUReranker, target_key_norm  # noqa: E402
 from utils.io import (AtomicParquetWriter, add_common_args, clear_stage, fail, limit_threads, log,  # noqa: E402
-                      paths_from_args, read_manifest, shard_name, stage_done, write_json, write_manifest)
+                      paths_from_args, read_manifest, shard_name, write_json, write_manifest, begin_stage, upstream_stamp)
 
 SCHEMA = pa.schema([("s1", pa.int32()), ("tgt", pa.int32()), ("blk_score", pa.float32()),
                     ("blk_nkeys", pa.uint8()), ("blk_fam", pa.uint8()), ("blk_rank", pa.uint8())])
@@ -53,12 +53,12 @@ def main():
     limit_threads(args.n_threads)
     paths = paths_from_args(args)
     out_dir = paths.candidates
-    if stage_done(out_dir) and not args.force:
-        log(f"{out_dir} already finished (use --force to rebuild)")
-        return
-    if args.force:
-        clear_stage(out_dir)
     iman = read_manifest(paths.index, f"stage 03 ({args.split})")
+    sig = {"stage": "04", "index": upstream_stamp(paths.index), "k": args.k, "rerank": not args.no_rerank,
+           "rerank_version": 1, "s1_per_shard": args.s1_per_shard,
+           "labels": upstream_stamp(paths.labels) if args.split == "train" else None}
+    if begin_stage(out_dir, sig, args.force):
+        return
     check_ram(0.3 + args.max_expanded * 50 / 2**30, "04 candidates", args.force)
     index = BlockingIndex(paths.index)
     s1k = S1Keys(paths.index)

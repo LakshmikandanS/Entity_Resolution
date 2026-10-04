@@ -17,7 +17,7 @@ from utils import config  # noqa: E402
 from utils.features import FEATURE_COLUMNS  # noqa: E402
 from utils.gpu import GB, check_ram, release_gpu  # noqa: E402
 from utils.io import (AtomicParquetWriter, add_common_args, clear_stage, limit_threads, list_shards, log,  # noqa: E402
-                      paths_from_args, read_manifest, stage_done, write_manifest)
+                      paths_from_args, read_manifest, write_manifest, begin_stage, upstream_stamp)
 from utils.model import batch_matrix, load_model, model_paths, predict  # noqa: E402
 
 SCHEMA = pa.schema([("s1", pa.int32()), ("tgt", pa.int32()), ("p", pa.float32()), ("label", pa.int8()),
@@ -32,12 +32,10 @@ def main():
     limit_threads(args.n_threads)
     paths = paths_from_args(args)
     out_dir = paths.oof
-    if stage_done(out_dir) and not args.force:
-        log(f"{out_dir} already finished (use --force to rebuild)")
-        return
-    if args.force:
-        clear_stage(out_dir)
     mman = read_manifest(paths.models, "stage 07")
+    sig = {"stage": "08", "features": upstream_stamp(paths.features), "models": upstream_stamp(paths.models)}
+    if begin_stage(out_dir, sig, args.force):
+        return
     n_folds = mman["n_folds"]
     check_ram(0.5 + args.batch_rows * len(FEATURE_COLUMNS) * 4 * 2 / GB, "08 OOF", args.force)
     models = [load_model(p, n_threads=args.n_threads) for p in model_paths(paths.models, n_folds)]

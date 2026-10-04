@@ -22,7 +22,7 @@ import pyarrow.parquet as pq  # noqa: E402
 from utils import config  # noqa: E402
 from utils.gpu import check_ram  # noqa: E402
 from utils.io import (AtomicParquetWriter, SOURCES, add_common_args, fail, iter_raw_tsv,  # noqa: E402
-                      limit_threads, log, numeric_ids, paths_from_args, stage_done, write_manifest)
+                      limit_threads, log, numeric_ids, paths_from_args, write_manifest, begin_stage, file_stamp)
 from utils.normalization import (F_ADDR_EMPTY, F_ADDR_PLACEHOLDER, F_ALLCAPS, F_ACCENTED,  # noqa: E402
                                  F_DOMAIN, F_INDIC_ADDR, F_INDIC_NAME, basic_address, basic_name)
 
@@ -115,8 +115,9 @@ def main():
     args = ap.parse_args()
     limit_threads(args.n_threads)
     paths = paths_from_args(args)
-    if stage_done(paths.normalized) and not args.force:
-        log(f"{paths.normalized} already finished (use --force to rebuild)")
+    sig = {"stage": "01", "chunk_rows": args.chunk_rows,
+           "raw": {s: file_stamp(paths.raw(s)) for s in SOURCES if os.path.exists(paths.raw(s))}}
+    if begin_stage(paths.normalized, sig, args.force):
         return
     check_ram(0.3 + args.chunk_rows * 1500 / 2**30, "01 normalize", args.force)
     summary = {"split": args.split, "chunk_rows": args.chunk_rows}

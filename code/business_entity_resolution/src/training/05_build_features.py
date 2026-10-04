@@ -25,7 +25,7 @@ from utils.features import (BASE_FEATURES, COMP_FEATURES, FEATURE_COLUMNS, GPU_F
                             s1_competition)
 from utils.gpu import GB, check_ram, get_device, gpu_report, release_gpu  # noqa: E402
 from utils.io import (AtomicParquetWriter, add_common_args, clear_stage, disk_size_gb, fail,  # noqa: E402
-                      limit_threads, list_shards, log, paths_from_args, read_manifest, stage_done,
+                      limit_threads, list_shards, log, paths_from_args, read_manifest, begin_stage, upstream_stamp,
                       write_manifest)
 
 BASE_SCHEMA = pa.schema([("s1", pa.int32()), ("tgt", pa.int32())] + [(f, pa.float32()) for f in BASE_FEATURES])
@@ -79,15 +79,14 @@ def main():
     limit_threads(args.n_threads)
     torch.set_num_threads(args.n_threads)
     paths = paths_from_args(args)
-    if stage_done(paths.features) and not args.force:
-        log(f"{paths.features} already finished (use --force to rebuild)")
-        return
-    if args.force:
-        clear_stage(paths.features_base)
-        clear_stage(paths.features)
     iman = read_manifest(paths.index, f"stage 03 ({args.split})")
     read_manifest(paths.candidates, f"stage 04 ({args.split})")
     is_train = args.split == "train"
+    sig = {"stage": "05", "candidates": upstream_stamp(paths.candidates), "features": FEATURE_COLUMNS,
+           "labels": upstream_stamp(paths.labels) if is_train else None}
+    if begin_stage(paths.features, sig, args.force):
+        return
+    begin_stage(paths.features_base, sig, args.force)
     n_t, n2 = iman["n_targets"], iman["n2"]
     est_vram = estimate_batch_vram_bytes(args.batch_size) / GB
     log(f"feature batch {args.batch_size:,} pairs -> estimated VRAM {est_vram:.2f} GB (cap {args.max_gpu_gb} GB)")

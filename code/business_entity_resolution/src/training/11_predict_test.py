@@ -24,7 +24,7 @@ from utils import config  # noqa: E402
 from utils.decision import Exclusivity  # noqa: E402
 from utils.features import FEATURE_COLUMNS  # noqa: E402
 from utils.gpu import GB, check_ram, release_gpu  # noqa: E402
-from utils.io import (AtomicParquetWriter, add_common_args, fail, limit_threads, list_shards, log,  # noqa: E402
+from utils.io import (AtomicParquetWriter, add_common_args, begin_stage, fail, limit_threads, list_shards, log, upstream_stamp,  # noqa: E402
                       paths_from_args, read_json, read_manifest, write_json)
 from utils.model import batch_matrix, load_model, predict  # noqa: E402
 
@@ -67,6 +67,9 @@ def main():
     iman = read_manifest(paths.index, "stage 03 (test)")
     cman = read_manifest(paths.candidates, "stage 04 (test)")
     read_manifest(paths.features, "stage 05 (test)")
+    begin_stage(paths.predictions, {"stage": "11", "features": upstream_stamp(paths.features),
+                                    "bundle": upstream_stamp(final), "model_set": args.model_set,
+                                    "threshold_override": args.threshold}, args.force)
     n1, n2, n_t = iman["n_s1"], iman["n2"], iman["n_targets"]
     check_ram(0.6 + args.batch_rows * len(FEATURE_COLUMNS) * 4 * 2 / GB + n_t * 8 / GB + n_t * 20 / GB,
               "11 predict", args.force)

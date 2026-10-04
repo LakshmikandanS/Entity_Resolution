@@ -29,8 +29,8 @@ import pyarrow.parquet as pq  # noqa: E402
 
 from utils import config  # noqa: E402
 from utils.gpu import check_ram  # noqa: E402
-from utils.io import (add_common_args, fail, iter_raw_tsv, limit_threads, log, paths_from_args,  # noqa: E402
-                      read_manifest, write_json, write_manifest)
+from utils.io import (add_common_args, begin_stage, fail, file_stamp, iter_raw_tsv, limit_threads, log,  # noqa: E402
+                      paths_from_args, read_manifest, upstream_stamp, write_json, write_manifest)
 from utils.normalization import F_INDIC_NAME, Canonicalizer, country_key  # noqa: E402
 
 
@@ -179,6 +179,11 @@ def main():
     limit_threads(args.n_threads)
     paths = paths_from_args(args)
     man = read_manifest(paths.normalized, "stage 01 (train)")
+    sig = {"stage": "02", "normalized": upstream_stamp(paths.normalized), "gt": file_stamp(paths.ground_truth),
+           "min_count": args.min_count, "min_share": args.min_share, "n_folds": config.N_FOLDS}
+    rebuild = args.force or not os.path.exists(paths.artifact("rewrite_map.json"))
+    if begin_stage(paths.labels, sig, rebuild):
+        return
     check_ram(0.8, "02 labels + rewrite map", args.force)
     owner, lstats = build_labels(paths, man, args.chunk_rows)
     rmap, rstats = learn_rewrites(paths, man, owner, args.min_count, args.min_share)

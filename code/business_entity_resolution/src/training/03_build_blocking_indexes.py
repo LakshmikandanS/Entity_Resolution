@@ -25,7 +25,7 @@ from utils.blocking import (FAMILIES, MAX_KEYS_PER_RECORD, PartitionedKeyWriter,
                             family_caps, record_keys)
 from utils.gpu import check_ram  # noqa: E402
 from utils.io import (add_common_args, fail, limit_threads, log, paths_from_args, read_json,  # noqa: E402
-                      read_manifest, stage_done, write_json, write_manifest)
+                      read_manifest, write_json, write_manifest, begin_stage, upstream_stamp, file_stamp)
 from utils.normalization import F_INDIC_NAME, F_LANDMARK, F_LEGAL_FRONT, Canonicalizer, country_key  # noqa: E402
 from utils.records import REC_DTYPE, build_record_block  # noqa: E402
 
@@ -202,9 +202,6 @@ def main():
     args = ap.parse_args()
     limit_threads(args.n_threads)
     paths = paths_from_args(args)
-    if stage_done(paths.index) and not args.force:
-        log(f"{paths.index} already finished (use --force to rebuild)")
-        return
     man = read_manifest(paths.normalized, f"stage 01 ({args.split})")
     rmap_path = paths.artifact("rewrite_map.json")
     if not os.path.exists(rmap_path):
@@ -213,6 +210,10 @@ def main():
     if rmap.get("params", {}).get("learned_from") != "train":
         fail("rewrite map was not learned from the training split")
     canon = Canonicalizer(rmap)
+    sig = {"stage": "03", "normalized": upstream_stamp(paths.normalized), "rewrite_map": file_stamp(rmap_path),
+           "caps": [args.max_key_frequency, args.max_key_frequency_common], "partitions": args.partitions}
+    if begin_stage(paths.index, sig, args.force):
+        return
     n_targets = man["s2"]["rows"] + man["s3"]["rows"]
     est_keys = n_targets * 13 / args.partitions
     check_ram(0.4 + args.chunk_rows * MAX_KEYS_PER_RECORD * 24 / 2**30 + 2 * est_keys * 32 / 2**30,

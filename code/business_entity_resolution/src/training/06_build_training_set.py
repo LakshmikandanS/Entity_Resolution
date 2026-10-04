@@ -25,7 +25,7 @@ import pyarrow.parquet as pq  # noqa: E402
 from utils import config  # noqa: E402
 from utils.gpu import check_ram  # noqa: E402
 from utils.io import (AtomicParquetWriter, add_common_args, clear_stage, disk_size_gb, limit_threads,  # noqa: E402
-                      list_shards, log, paths_from_args, read_manifest, stage_done, write_json,
+                      list_shards, log, paths_from_args, read_manifest, begin_stage, upstream_stamp, write_json,
                       write_manifest)
 
 M = np.uint64(1_000_003)
@@ -52,12 +52,11 @@ def main():
     limit_threads(args.n_threads)
     paths = paths_from_args(args)
     out_dir = paths.trainset
-    if stage_done(out_dir) and not args.force:
-        log(f"{out_dir} already finished (use --force to rebuild)")
-        return
-    if args.force:
-        clear_stage(out_dir)
     read_manifest(paths.features, "stage 05 (train)")
+    sig = {"stage": "06", "features": upstream_stamp(paths.features), "hard_rank": args.hard_rank,
+           "hard_h": args.hard_h, "easy_rate": args.easy_rate, "entity_frac": args.entity_frac}
+    if begin_stage(out_dir, sig, args.force):
+        return
     check_ram(1.2, "06 training set", args.force)
     st = {k: 0 for k in ("candidates", "positives", "negatives_kept", "hard_negatives", "easy_negatives",
                          "discarded", "hn_same_name", "hn_addr_conflict", "hn_high_rank", "entities_dropped_rows")}

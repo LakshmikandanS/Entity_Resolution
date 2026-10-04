@@ -161,6 +161,46 @@ def clear_stage(directory):
             os.remove(p)
 
 
+SIGNATURE = "_INPUTS.json"
+
+
+def upstream_stamp(directory):
+    """Finish time recorded in an upstream stage's manifest (changes whenever it is rebuilt)."""
+    p = os.path.join(directory, MANIFEST)
+    return read_json(p).get("finished_at") if os.path.exists(p) else None
+
+
+def file_stamp(path):
+    st = os.stat(path)
+    return f"{st.st_size}:{int(st.st_mtime)}"
+
+
+def begin_stage(directory, signature, force=False):
+    """Decide whether a stage can be skipped or resumed, given what its outputs were built from.
+
+    Returns True when the stage is finished AND was built from the same inputs/settings (skip it).
+    Otherwise partial or stale outputs are deleted when the signature differs (or with --force),
+    so a resumed run never mixes shards made under different settings. A finished stage written
+    before signatures existed is adopted as-is."""
+    sig_path = os.path.join(directory, SIGNATURE)
+    sig = json.loads(json.dumps(signature, default=_json_default, sort_keys=True))
+    old = read_json(sig_path) if os.path.exists(sig_path) else None
+    has_output = any(os.path.isfile(p) and os.path.basename(p) != SIGNATURE
+                     for p in glob.glob(os.path.join(directory, "*")))
+    done = stage_done(directory)
+    if not force and done and old in (None, sig):
+        if old is None:
+            write_json(sig_path, sig)
+        log(f"{directory} already finished with the same inputs (use --force to rebuild)")
+        return True
+    if force or (has_output and old != sig):
+        if has_output:
+            log(f"{directory}: {'--force' if force else 'inputs or settings changed'}; clearing previous outputs")
+        clear_stage(directory)
+    write_json(sig_path, sig)
+    return False
+
+
 # --------------------------------------------------------------------------- raw TSV
 RAW_COLUMNS = ["entity_id", "business_name", "business_address", "country"]
 
