@@ -1,7 +1,8 @@
 """Stage 04: candidate generation from the inverted index (bounded, chunked, resumable).
 
 Per S1: look up its keys, expand postings, aggregate per target (score = sum of key IDF, family
-bitmask, number of shared keys), keep the top-K by score (ties: lower target index).
+bitmask, number of shared keys), rescore every aggregated candidate on the GPU with a cheap
+name/address similarity (utils/rerank.py), keep the top-K (ties: lower target index).
 Output: work/<split>/candidates/part-XXXXX.parquet, one shard per S1_PER_SHARD S1 rows, rows sorted
 by (s1, blk_rank). These shards are exactly the pairs the model scores, so they are also the source
 of output/candidate_pairs.tsv.
@@ -21,7 +22,8 @@ import pyarrow.parquet as pq  # noqa: E402
 
 from utils import config  # noqa: E402
 from utils.blocking import FAMILIES, BlockingIndex, S1Keys, generate_candidates  # noqa: E402
-from utils.gpu import check_ram  # noqa: E402
+from utils.gpu import GB, check_ram, get_device, gpu_report, release_gpu  # noqa: E402
+from utils.rerank import GPUReranker, target_key_norm  # noqa: E402
 from utils.io import (AtomicParquetWriter, add_common_args, clear_stage, fail, limit_threads, log,  # noqa: E402
                       paths_from_args, read_manifest, shard_name, stage_done, write_json, write_manifest)
 
@@ -40,7 +42,10 @@ def main():
     ap.add_argument("--k", type=int, default=config.MAX_CANDIDATES_PER_S1)
     ap.add_argument("--max-expanded", type=int, default=config.MAX_EXPANDED_POSTINGS)
     ap.add_argument("--s1-per-shard", type=int, default=config.S1_PER_SHARD)
-    ap.add_argument("--min-recall", type=float, default=0.97,
+    ap.add_argument("--no-rerank", action="store_true", help="rank by summed key IDF only")
+    ap.add_argument("--device", choices=["cuda", "cpu"], default="cuda")
+    ap.add_argument("--max-gpu-gb", type=float, default=config.MAX_GPU_MEMORY_GB)
+    ap.add_argument("--min-recall", type=float, default=0.95,
                     help="train only: fail if blocking recall over all GT links is below this")
     args = ap.parse_args()
     if args.k > 255:
@@ -58,6 +63,23 @@ def main():
     index = BlockingIndex(paths.index)
     s1k = S1Keys(paths.index)
     n1 = s1k.n
+    reranker = None
+    if not args.no_rerank:
+        norm_path = os.path.join(paths.index, "tnorm.npy")
+        keys_path = os.path.join(paths.index, "keys.npy")
+        if not os.path.exists(norm_path) or os.path.getmtime(norm_path) < os.path.getmtime(keys_path):
+            np.save(norm_path, target_key_norm(index, iman["n_targets"]))
+        n_rec = n1 + iman["n_targets"]
+        est = n_rec * 136 / GB + 0.6
+        log(f"GPU re-rank: compact records {n_rec * 136 / GB:.2f} GB + batch ~0.5 GB (cap {args.max_gpu_gb} GB)")
+        if est > args.max_gpu_gb:
+            fail(f"re-rank needs ~{est:.1f} GB VRAM > --max-gpu-gb {args.max_gpu_gb}; use --no-rerank or raise the cap")
+        check_ram(0.3 + args.max_expanded * 50 / GB + n_rec * 136 / GB, "04 re-rank setup", args.force)
+        device = get_device(args.device, args.max_gpu_gb)
+        reranker = GPUReranker(np.load(os.path.join(paths.records, "s1.npy"), mmap_mode="r"),
+                               np.load(os.path.join(paths.records, "tgt.npy"), mmap_mode="r"),
+                               np.load(norm_path), device)
+        log(f"re-ranker ready on {device} ({reranker.vram_gb():.2f} GB on device)")
     is_train = args.split == "train"
     if is_train:
         owner = np.load(os.path.join(paths.labels, "owner.npy"), mmap_mode="r")
@@ -80,7 +102,7 @@ def main():
             res = {c: pq.read_table(dest, columns=[c]).column(0).to_numpy() for c in ("s1", "tgt", "blk_rank", "blk_fam")}
             per_s1 = None
         else:
-            res, per_s1 = generate_candidates(index, s1k, lo, hi, args.k, args.max_expanded)
+            res, per_s1 = generate_candidates(index, s1k, lo, hi, args.k, args.max_expanded, reranker)
             w = AtomicParquetWriter(dest, SCHEMA)
             w.write_table(pa.table({c: pa.array(res[c]) for c in SCHEMA.names}, schema=SCHEMA))
             w.close()
@@ -102,7 +124,9 @@ def main():
                 msg += f", recall so far {pos_rank_hist.sum() / max(int(n_true[:hi].sum()), 1):.4f}"
             log(msg)
 
-    stats = {"split": args.split, "k": args.k, "s1": n1, "pairs": total_pairs, "s1_per_shard": args.s1_per_shard,
+    del reranker
+    release_gpu()
+    stats = {"split": args.split, "k": args.k, "rerank": not args.no_rerank, "gpu": gpu_report(), "s1": n1, "pairs": total_pairs, "s1_per_shard": args.s1_per_shard,
              "n_shards": n_shards,
              "expanded_postings_total": total_expanded,
              "expanded_per_s1_log2_hist": exp_hist.tolist(),

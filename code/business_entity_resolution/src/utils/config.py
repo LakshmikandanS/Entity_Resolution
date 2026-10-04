@@ -27,7 +27,7 @@ TRAIN_ITER_ROWS = _env("TRAIN_ITER_ROWS", 500_000, int)    # rows per XGBoost Da
 # Blocking
 MAX_CANDIDATES_PER_S1 = _env("MAX_CANDIDATES_PER_S1", 32, int)
 MAX_KEY_FREQUENCY = _env("MAX_KEY_FREQUENCY", 1000, int)            # rare families P, C, X, S
-MAX_KEY_FREQUENCY_COMMON = _env("MAX_KEY_FREQUENCY_COMMON", 300, int)  # frequent families N, A
+MAX_KEY_FREQUENCY_COMMON = _env("MAX_KEY_FREQUENCY_COMMON", 1000, int)  # frequent families N, A
 MAX_EXPANDED_POSTINGS = _env("MAX_EXPANDED_POSTINGS", 8_000_000, int)
 S1_PER_SHARD = _env("S1_PER_SHARD", 50_000, int)
 INDEX_PARTITIONS = _env("INDEX_PARTITIONS", 16, int)       # power of two

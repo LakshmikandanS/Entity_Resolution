@@ -143,6 +143,9 @@ def build_records_and_keys(paths, man, canon, chunk_rows, n_partitions):
 
 def build_index(paths, n_targets, n_partitions, caps):
     idx_dir = paths.index
+    stale = os.path.join(idx_dir, "tnorm.npy")   # derived from the old index; 04 recomputes it
+    if os.path.exists(stale):
+        os.remove(stale)
     writer = PartitionedKeyWriter.__new__(PartitionedKeyWriter)
     writer.dir, writer.n = idx_dir, n_partitions
     fam_stats = {f: {"keys": 0, "postings": 0, "keys_dropped": 0, "postings_dropped": 0,

@@ -160,9 +160,10 @@ class S1Keys:
         self.n = len(self.offs) - 1
 
 
-def generate_candidates(index, s1keys, lo, hi, k, max_expanded):
+def generate_candidates(index, s1keys, lo, hi, k, max_expanded, reranker=None):
     """Top-k candidates for S1 rows [lo, hi). Returns dict of arrays sorted by (s1, rank) and the
-    total number of expanded postings (for reporting)."""
+    number of expanded postings per S1 (for reporting). Candidates are ranked by
+    reranker.score(...) when a reranker is given (see rerank.py), otherwise by summed key IDF."""
     ko = np.asarray(s1keys.offs[lo:hi + 1])
     q = np.asarray(s1keys.keys[ko[0]:ko[-1]])
     q_s1 = np.repeat(np.arange(hi - lo, dtype=np.int32), np.diff(ko))
@@ -181,7 +182,7 @@ def generate_candidates(index, s1keys, lo, hi, k, max_expanded):
         b = int(np.searchsorted(cum, base + max_expanded, side="right"))
         b = max(b, a + 1)
         m = (q_s1 >= a) & (q_s1 < b)
-        _expand(index, q_s1[m], pos[m], starts[m], df[m], lo, k, out)
+        _expand(index, q_s1[m], pos[m], starts[m], df[m], lo, k, out, reranker)
         a = b
     res = {n: (np.concatenate(v) if v else np.zeros(0)) for n, v in out.items()}
     dt = {"s1": np.int32, "tgt": np.int32, "blk_score": np.float32, "blk_nkeys": np.uint8,
@@ -190,7 +191,7 @@ def generate_candidates(index, s1keys, lo, hi, k, max_expanded):
     return res, per_s1
 
 
-def _expand(index, q_s1, pos, starts, df, lo, k, out):
+def _expand(index, q_s1, pos, starts, df, lo, k, out, reranker=None):
     total = int(df.sum())
     if total == 0:
         return
@@ -214,7 +215,8 @@ def _expand(index, q_s1, pos, starts, df, lo, k, out):
     del pk, w, fb
     s1l = (upk >> 32).astype(np.int32)
     tg = (upk & 0xFFFFFFFF).astype(np.int32)
-    o2 = np.lexsort((tg, -score, s1l))
+    rank_score = reranker.score(s1l + lo, tg, score) if reranker is not None else score
+    o2 = np.lexsort((tg, -rank_score, s1l))
     s1l, tg, score, bits, nkeys = s1l[o2], tg[o2], score[o2], bits[o2], nkeys[o2]
     gstart = np.flatnonzero(np.r_[True, s1l[1:] != s1l[:-1]])
     rank = np.arange(len(s1l)) - np.repeat(gstart, np.diff(np.r_[gstart, len(s1l)]))
