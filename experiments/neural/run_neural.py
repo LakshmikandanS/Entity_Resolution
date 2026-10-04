@@ -105,6 +105,11 @@ def run(cmd, log):
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):   # Indic names / progress bars must not crash a cp1252 console
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", default=os.path.join(HERE, "config.yaml"))
     g = ap.add_mutually_exclusive_group()

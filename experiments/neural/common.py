@@ -22,6 +22,12 @@ import pyarrow.csv as pacsv
 import yaml
 
 HERE = Path(__file__).resolve().parent
+
+for _stream in (sys.stdout, sys.stderr):   # Windows consoles/pipes may default to cp1252; data has Indic text
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 SOURCE_COLUMNS = ["entity_id", "business_name", "business_address", "country"]
 
 
