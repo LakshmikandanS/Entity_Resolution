@@ -137,11 +137,23 @@ def main():
                       "training_rows_fingerprint": h})
 
     backend, device = api.choose_backend(cc["backend"])
-    keep_frac = 1.0
-    if backend == "xgboost" and device == "cuda":   # one budget, computed for the wider arm, used by both
-        keep_frac = api.xgb_keep_frac(tstats["rows"] * (n_folds - 1) / n_folds, len(base) + len(NN),
-                                      cc["max_gpu_gb"])
-    setup.update({"backend": backend, "device": device, "keep_frac": keep_frac})
+    keep_frac, est_ram = 1.0, None
+    if backend == "xgboost":
+        # One entity-level subsample fraction, computed for the wider arm (B) and used by both arms, so the
+        # training rows stay identical. Two budgets: the baseline's VRAM rule, and host RAM, which is the
+        # binding one on this laptop: XGBoost's QuantileDMatrix holds ~xgb_host_bytes_per_value bytes per
+        # training value in host RAM while it is built.
+        rows_fold = tstats["rows"] * (n_folds - 1) / n_folds * 0.95          # minus the 5% es_val rows
+        n_feat = len(base) + len(NN)
+        est_ram = 0.6 + rows_fold * n_feat * cc["xgb_host_bytes_per_value"] / 1e9
+        ram_keep = min(1.0, (cc["max_train_ram_gb"] - 0.6) / max(est_ram - 0.6, 1e-9))
+        vram_keep = api.xgb_keep_frac(rows_fold, n_feat, cc["max_gpu_gb"]) if device == "cuda" else 1.0
+        keep_frac = min(ram_keep, vram_keep)
+        print(f"XGBoost training rows per fold ~{rows_fold:,.0f} x {n_feat} features: estimated host RAM "
+              f"{est_ram:.1f} GB at full size; keep_frac {keep_frac:.3f} (RAM budget {cc['max_train_ram_gb']} GB, "
+              f"VRAM budget {cc['max_gpu_gb']} GB), same for both arms", flush=True)
+    setup.update({"backend": backend, "device": device, "keep_frac": keep_frac,
+                  "est_train_ram_gb_full": est_ram})
     mon.note("setup", setup)
 
     prog_path = out / "progress.json"

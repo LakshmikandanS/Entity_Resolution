@@ -73,6 +73,8 @@ compare:
   # model settings mirror baseline 07_train.py defaults; identical for both arms
   backend: auto                    # auto | xgboost | hgb (auto = GPU XGBoost if installed, else HGB)
   max_gpu_gb: 6.0
+  max_train_ram_gb: 4.5            # host RAM budget for one XGBoost fit (QuantileDMatrix build)
+  xgb_host_bytes_per_value: 5.2    # measured: baseline 07 fold 0, 15.6M rows x 64 features -> 5.8 GB RSS
   n_threads: 4
   iter_rows: 500000
   max_train_rows: 3000000          # HGB fallback cap (entity-level subsample, as in baseline)

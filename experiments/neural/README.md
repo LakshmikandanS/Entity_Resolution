@@ -111,8 +111,10 @@ Baseline `MAX_CANDIDATES_PER_S1 = 32`, so train pairs P <= 70.6M (eval split ~63
 | 2 n02 | ~763k groups x 5 records x 2 fields, batch 64 groups | ~2.5-3.5 GB (measured 3.0 GB on the sample) | 1.8 GB measured | ~1 GB checkpoint, 0.47 GB model | ~70 min (763k / 180 groups/s) |
 | 3 n03 train | 12.53M records x 2 sequences | ~2.2 GB measured | 1.0 GB measured | 6.4 GB | ~45 min (at 4,750 records/s) |
 | 4 n04 train | P <= 70.6M pairs | < 1.5 GB | ~3 GB | 1.1 GB features + 0.6 GB pair metadata (+1.1 GB temp) | 5-15 min |
-| 5 n05 | training rows = baseline trainset on eval S1; 2 arms x 2 folds; 2 OOF passes over P | ~1-2 GB (XGBoost) / up to ~2.6 GB (HGB) | baseline model only (XGBoost <= 0.8 x 6 GB cap) | trainset copy (same order as baseline's) + 0.56 GB OOF | dominated by 4 model fits |
+| 5 n05 | eval-split share of baseline trainset (~29.6M of 32.9M rows); 2 arms x 2 folds; 2 OOF passes over P | <= 4.5 GB (XGBoost host RAM cap via keep_frac; full size would be ~5.9 GB) | XGBoost ~2-3 GB | trainset copy (~1.2 GB) + 0.55 GB OOF | dominated by 4 GPU XGBoost fits (baseline 07 fold 0 matrix: 3 min build) |
 | 6 n03+n04+n06 test | 11.7M records; P <= 55.4M | ~2.2 GB | ~3 GB / model only | 6.0 + 1.3 GB + TSVs | ~1 h (embedding ~41 min) |
+
+XGBoost host RAM: baseline stage 07 measured 5.8 GB RSS for a 15.6M x 64 training matrix (~5.2 bytes per value). n05 therefore trains both arms on the same entity-level subsample (`keep_frac`, ~0.74 at the 4.5 GB cap in `config.yaml` `compare.max_train_ram_gb`); raise the cap if more RAM is free.
 
 Memory techniques: chunked Arrow reads (never pandas), length-sorted fp16 inference with per-chunk string
 dedup, fp16 memmaps for embeddings and features, S1 embeddings resident on GPU with targets streamed in
